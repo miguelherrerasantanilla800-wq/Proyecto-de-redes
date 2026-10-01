@@ -39,6 +39,16 @@ En Vagrant cada bloque se ejecuta en su propia VM dentro de una red privada:
 
 Solo el gateway publica un puerto al host en Vagrant (`localhost:8081`). En Docker, Nginx publica `localhost:8080`. Ambas opciones pueden funcionar a la vez. La base de datos de cada modo es independiente.
 
+## Alcance de la entrega y dominio
+
+La entrega corre **localmente en el equipo Windows** usando Vagrant y VirtualBox; no está desplegada en servidores de nube. El servidor de frontend es la VM `gateway` (Nginx sirve los archivos estáticos), las APIs backend están en las VMs `auth` y `bank`, y PostgreSQL en `database`. Las direcciones `192.168.56.x` pertenecen a la red privada de VirtualBox; el acceso desde Windows se realiza por `http://localhost:8081`.
+
+`bancomnm.xyz` aparece únicamente como sufijo de los correos de demostración (`cliente1@bancomnm.xyz`, por ejemplo). **No se configura DNS ni se publica un sitio en ese dominio** en esta entrega. La aplicación solo está disponible localmente: `localhost:8081` con Vagrant o `localhost:8080` con Docker Compose.
+
+## Motivación y problema
+
+El proyecto simula un banco para practicar autenticación, autorización por roles y despliegue de servicios separados. Un cliente necesita consultar su cuenta y enviar dinero a otro cliente; un analista necesita observar indicadores agregados y alertas de movimientos grandes. AUTH gestiona identidad y tokens, mientras BANCO ejecuta las operaciones financieras y mantiene el ledger. No se conecta a una entidad bancaria real ni mueve dinero real.
+
 ## Estructura del proyecto
 
 ```text
@@ -145,6 +155,18 @@ Usuarios de demostración (solo desarrollo):
 
 Desactiva `SEED_DEMO_DATA` y cambia todos los secretos antes de cualquier despliegue real.
 
+## Esquema de base de datos
+
+`database/init/01-create-databases.sh` crea `banco_db`; PostgreSQL crea `auth_db` desde `POSTGRES_DB`. Cada API crea sus tablas al arrancar mediante SQLAlchemy (`Base.metadata.create_all`). El modelo `usuarios` vive en `auth_db`; `cuentas` y `transacciones`, en `banco_db`.
+
+| Base | Tabla | Columnas y restricciones |
+| --- | --- | --- |
+| `auth_db` | `usuarios` | `id INTEGER` PK; `email VARCHAR(255)` único e indexado; `password_hash VARCHAR(255)`; `role VARCHAR(20)` indexado; `account_id INTEGER` nullable. |
+| `banco_db` | `cuentas` | `id INTEGER` PK; `opened_on DATE`; `username VARCHAR(80)` nullable y único. |
+| `banco_db` | `transacciones` | `id INTEGER` PK; `account_id INTEGER` FK a `cuentas.id` e indexado; `date DATE` indexada; `type VARCHAR(10)` indexado; `operation VARCHAR(100)`; `amount NUMERIC(14,2)`; `balance_after NUMERIC(14,2)`; `category VARCHAR(100)` indexada. |
+
+`account_id` en `usuarios` no es una FK: AUTH y BANCO guardan sus datos en bases separadas. La relación de transacciones con cuentas sí está declarada como FK dentro de `banco_db`. `username` permite resolver el alias de destino de una transferencia y admite `NULL` para cuentas históricas sin alias.
+
 ## Transferir dinero
 
 Inicia sesión como cliente y abre **Transferir**. Elige un alias disponible, indica el importe en COP y confirma. Los alias demo son `cliente1`, `cliente2`, etc.; actualmente son la parte anterior a `@` del correo. La API solo ofrece como destinatarios otras cuentas con alias.
@@ -180,3 +202,25 @@ python -m pytest app/tests -q
 ```
 
 Las pruebas usan SQLite temporal y no necesitan arrancar los contenedores.
+
+### Evidencias de ejecución en Windows
+
+Salida real de pytest ejecutado desde PowerShell en la raíz del repositorio:
+
+```text
+....                                                                     [100%]
+4 passed in 4.21s
+```
+
+Salida real de las llamadas autenticadas al gateway Vagrant desde Windows PowerShell:
+
+```text
+WINDOWS_HEALTH=ok; LOGIN_ROLE=cliente; SUMMARY=ok; AVAILABLE_RECIPIENTS=4
+HEALTH=ok; ROLE=cliente; TRANSFER=completada; RECIPIENT=cliente2; AMOUNT=1.25
+```
+
+Captura real del dashboard después de iniciar sesión como cliente en el servidor local de Vagrant:
+
+![Dashboard Banco MNM abierto desde Windows en localhost:8081](docs/evidence/windows-client-dashboard.png)
+
+La captura muestra la interfaz autenticada; la salida de pytest se conserva arriba como texto para que sea copiable y verificable. Para generar evidencia nueva, repite los comandos de las secciones Vagrant y Pruebas en tu propio equipo.
