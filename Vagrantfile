@@ -1,25 +1,33 @@
+SERVICES = {
+  "database" => { ip: "192.168.56.20", memory: 1024 },
+  "auth" => { ip: "192.168.56.21", memory: 768 },
+  "bank" => { ip: "192.168.56.22", memory: 768 },
+  "gateway" => { ip: "192.168.56.23", memory: 512 },
+}.freeze
+
 Vagrant.configure("2") do |config|
-
   config.vm.box = "ubuntu/jammy64"
+  config.vm.boot_timeout = 600
 
-  config.vm.hostname = "monolith"
+  SERVICES.each do |name, settings|
+    config.vm.define name do |machine|
+      machine.vm.hostname = "mnm-#{name}"
+      machine.vm.network "private_network", ip: settings[:ip]
 
-  config.vm.network "private_network",
-                    ip: "192.168.56.10"
+      if name == "gateway"
+        machine.vm.network "forwarded_port",
+                           guest: 80,
+                           host: 8081,
+                           host_ip: "127.0.0.1"
+      end
 
-  # FastAPI
-  config.vm.network "forwarded_port",
-                    guest: 8000,
-                    host: 8000
+      machine.vm.provider "virtualbox" do |virtualbox|
+        virtualbox.name = "banco-mnm-#{name}"
+        virtualbox.memory = settings[:memory]
+        virtualbox.cpus = 1
+      end
 
-  config.vm.provider "virtualbox" do |vb|
-    vb.name = "monolith-vm"
-    vb.memory = 2048
-    vb.cpus = 2
+      machine.vm.provision "shell", path: "vagrant/provision.sh", args: [name]
+    end
   end
-
-  config.vm.provision "ansible" do |ansible|
-    ansible.playbook = "ansible/site.yml"
-  end
-
 end

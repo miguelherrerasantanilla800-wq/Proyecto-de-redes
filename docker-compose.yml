@@ -1,0 +1,65 @@
+services:
+  database:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER:-mnm}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:-mnm-local-only}
+      POSTGRES_DB: auth_db
+    volumes:
+      - postgres_data:/var/lib/postgresql/data
+      - ./database/init:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $${POSTGRES_USER} -d auth_db"]
+      interval: 5s
+      timeout: 5s
+      retries: 10
+
+  auth:
+    build: ./app
+    command: ["uvicorn", "auth_service.main:app", "--host", "0.0.0.0", "--port", "8001"]
+    environment:
+      AUTH_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-mnm}:${POSTGRES_PASSWORD:-mnm-local-only}@database:5432/auth_db
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      TOKEN_MINUTES: ${TOKEN_MINUTES:-60}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8001/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  bank:
+    build: ./app
+    command: ["uvicorn", "bank_service.main:app", "--host", "0.0.0.0", "--port", "8002"]
+    environment:
+      BANK_DATABASE_URL: postgresql+psycopg://${POSTGRES_USER:-mnm}:${POSTGRES_PASSWORD:-mnm-local-only}@database:5432/banco_db
+      JWT_SECRET: ${JWT_SECRET:?Set JWT_SECRET in .env}
+      ALERT_THRESHOLD: ${ALERT_THRESHOLD:-100000}
+      SEED_DEMO_DATA: ${SEED_DEMO_DATA:-true}
+    depends_on:
+      database:
+        condition: service_healthy
+    healthcheck:
+      test: ["CMD", "python", "-c", "import urllib.request; urllib.request.urlopen('http://localhost:8002/health')"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+  nginx:
+    image: nginx:1.27-alpine
+    ports:
+      - "${HTTP_PORT:-8080}:80"
+    volumes:
+      - ./nginx/default.conf:/etc/nginx/conf.d/default.conf:ro
+      - ./frontend:/usr/share/nginx/html:ro
+    depends_on:
+      auth:
+        condition: service_healthy
+      bank:
+        condition: service_healthy
+
+volumes:
+  postgres_data:
